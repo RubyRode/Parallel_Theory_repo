@@ -1,0 +1,56 @@
+==40677== NVPROF is profiling process 40677, command: ./code_gpu_double
+==40677== Profiling application: ./code_gpu_double
+==40677== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   39.16%  105.06us         1  105.06us  105.06us  105.06us  Arr_sum_32_gpu(double const *, int)
+                   36.46%  97.824us         1  97.824us  97.824us  97.824us  Arr_fill_23_gpu(double*, int)
+                   22.61%  60.672us         1  60.672us  60.672us  60.672us  Arr_sum_32_gpu__red(double const *, int)
+                    1.23%  3.2970us         1  3.2970us  3.2970us  3.2970us  [CUDA memcpy DtoH]
+                    0.54%  1.4400us         1  1.4400us  1.4400us  1.4400us  [CUDA memset]
+      API calls:   79.18%  158.36ms         1  158.36ms  158.36ms  158.36ms  cuDevicePrimaryCtxRetain
+                   13.66%  27.315ms         1  27.315ms  27.315ms  27.315ms  cuMemHostAlloc
+                    5.81%  11.618ms         4  2.9045ms  5.0070us  11.234ms  cuMemAlloc
+                    0.92%  1.8448ms         1  1.8448ms  1.8448ms  1.8448ms  cuMemAllocHost
+                    0.19%  382.85us         1  382.85us  382.85us  382.85us  cuModuleLoadDataEx
+                    0.14%  285.87us         6  47.645us  1.2150us  107.77us  cuEventSynchronize
+                    0.02%  46.067us         3  15.355us  6.9870us  29.300us  cuLaunchKernel
+                    0.02%  32.931us        11  2.9930us  1.5940us  6.7370us  cuEventRecord
+                    0.01%  16.125us         7  2.3030us  1.7290us  4.7280us  cuStreamSynchronize
+                    0.01%  15.810us         4  3.9520us  1.5980us  5.7700us  cuDeviceGetPCIBusId
+                    0.01%  14.342us         1  14.342us  14.342us  14.342us  cuMemcpyDtoHAsync
+                    0.01%  13.026us         5  2.6050us  2.4440us  2.9670us  cuEventElapsedTime
+                    0.01%  11.861us        22     539ns     418ns  1.4100us  cuDeviceGetAttribute
+                    0.00%  8.1770us         1  8.1770us  8.1770us  8.1770us  cuMemsetD32Async
+                    0.00%  5.5320us         4  1.3830us     506ns  2.7660us  cuEventCreate
+                    0.00%  5.2030us         8     650ns     385ns  2.2950us  cuDeviceGet
+                    0.00%  4.5270us         2  2.2630us  1.5960us  2.9310us  cuPointerGetAttributes
+                    0.00%  3.5400us         3  1.1800us     481ns  2.2450us  cuDeviceGetCount
+                    0.00%  1.9330us         4     483ns     401ns     713ns  cuDeviceComputeCapability
+                    0.00%  1.6280us         3     542ns     249ns     733ns  cuCtxSetCurrent
+                    0.00%  1.5990us         3     533ns     329ns     896ns  cuModuleGetFunction
+                    0.00%  1.2510us         3     417ns     305ns     553ns  cuDriverGetVersion
+                    0.00%  1.0990us         1  1.0990us  1.0990us  1.0990us  cuCtxGetCurrent
+ OpenACC (excl):   95.04%  27.354ms         2  13.677ms  2.0470us  27.352ms  acc_exit_data@code_cpu.cpp:32
+                    1.52%  437.27us         1  437.27us  437.27us  437.27us  acc_enter_data@code_cpu.cpp:51
+                    1.44%  414.28us         1  414.28us  414.28us  414.28us  acc_device_init@code_cpu.cpp:51
+                    0.53%  153.11us         1  153.11us  153.11us  153.11us  acc_enqueue_launch@code_cpu.cpp:23 (_Z15Arr_fill_23_gpuPdi)
+                    0.45%  129.45us         1  129.45us  129.45us  129.45us  acc_enqueue_launch@code_cpu.cpp:32 (_Z14Arr_sum_32_gpuPKdi)
+                    0.28%  81.190us         1  81.190us  81.190us  81.190us  acc_enqueue_launch@code_cpu.cpp:32 (_Z19Arr_sum_32_gpu__redPKdi)
+                    0.20%  58.167us         1  58.167us  58.167us  58.167us  acc_enqueue_download@code_cpu.cpp:37 (sum)
+                    0.14%  39.695us         1  39.695us  39.695us  39.695us  acc_wait@code_cpu.cpp:37
+                    0.10%  28.839us         2  14.419us  2.4040us  26.435us  acc_enter_data@code_cpu.cpp:32
+                    0.10%  27.641us         1  27.641us  27.641us  27.641us  acc_enqueue_upload@code_cpu.cpp:32 (sum)
+                    0.03%  9.6970us         1  9.6970us  9.6970us  9.6970us  acc_compute_construct@code_cpu.cpp:32
+                    0.03%  9.0530us         1  9.0530us  9.0530us  9.0530us  acc_wait@code_cpu.cpp:51
+                    0.03%  9.0100us         3  3.0030us  2.7460us  3.1680us  acc_wait@code_cpu.cpp:32
+                    0.03%  8.5080us         1  8.5080us  8.5080us  8.5080us  acc_compute_construct@code_cpu.cpp:23
+                    0.02%  6.5180us         1  6.5180us  6.5180us  6.5180us  acc_exit_data@code_cpu.cpp:23
+                    0.02%  6.0530us         2  3.0260us  2.9760us  3.0770us  acc_wait@code_cpu.cpp:23
+                    0.02%  5.3500us         1  5.3500us  5.3500us  5.3500us  acc_exit_data@code_cpu.cpp:51
+                    0.02%  4.5870us         1  4.5870us  4.5870us  4.5870us  acc_enter_data@code_cpu.cpp:23
+                    0.00%       0ns         1       0ns       0ns       0ns  acc_delete@code_cpu.cpp:37
+                    0.00%       0ns         1       0ns       0ns       0ns  acc_alloc@code_cpu.cpp:51
+                    0.00%       0ns         1       0ns       0ns       0ns  acc_create@code_cpu.cpp:51
+                    0.00%       0ns         1       0ns       0ns       0ns  acc_alloc@code_cpu.cpp:32
+                    0.00%       0ns         1       0ns       0ns       0ns  acc_create@code_cpu.cpp:32
+                    0.00%       0ns         1       0ns       0ns       0ns  acc_delete@code_cpu.cpp:65
