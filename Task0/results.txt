@@ -1,0 +1,24 @@
+cpu-1 double result:
+sum = 0.00000000013334577636832
+Time = 0.253188 secs
+
+cpu-1 float result
+sum = 0.20645326375961303710938
+Time = 0.18844 secs
+
+multicore double result
+sum = 0.00000000349245965480804
+Time = 1.36392 secs
+
+multicore float result
+sum = 0.02343750000000000000000
+Time = 0.307923 secs
+
+gpu double result
+sum = -0.00002010496369067105507
+Time = 0.024535 secs
+
+gpu float result
+sum = -0.00000108755193650722504
+Time = 0.024562 secs
+

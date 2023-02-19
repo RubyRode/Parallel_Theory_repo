@@ -58,7 +58,7 @@ int main (int argc, char** argv){
 
         clock_t end = clock();
         time += (double)(end - begin)/CLOCKS_PER_SEC;
-        cout << "\nTime = " << time << " secs" << endl;
+        cout << "\nTime = " << time << " secs\n" << endl;
 
         free(dbs);
 
