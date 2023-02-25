@@ -60,8 +60,7 @@ int main (int argc, char** argv){
         time += (double)(end - begin)/CLOCKS_PER_SEC;
         cout << "\nTime = " << time << " secs\n" << endl;
 
-        free(dbs);
-
     }
+    free(dbs);
     return 0;
 }
