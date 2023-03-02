@@ -71,6 +71,7 @@ public:
     }
 
     void fill(){
+        #pragma acc parallel loop
         for (int i=1; i<this->size-1; i++){
             for (int j=1; j<this->size-1; j++){
                 this->grid[i][j] = (this->grid[i-1][j] + this->grid[i][j-1] + this->grid[i][j+1] + this->grid[i+1][j])/4;
@@ -92,8 +93,8 @@ int main(int argc, char ** argv){
     parser input = parser(argc, argv);
     Grid gr(input);
 
-
     gr.init();
+    #pragma acc data copy(gr)
     for (int i=0; i<gr.iters(); i++) {
         gr.fill();
     }
