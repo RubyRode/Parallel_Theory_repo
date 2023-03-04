@@ -39,111 +39,93 @@ private:
 
 };
 
-class Grid{
-private:
-
-    std::vector<std::vector<double>> a;
-    std::vector<std::vector<double>> a_new;
-    int size;
-    double corners[4] = {10, 20, 30, 20};
-    double _accuracy;
-    int _iters;
-
-public:
-    explicit Grid(parser input){
-        this->size = input.grid();
-        this->a = std::vector<std::vector<double>>(this->size, std::vector<double>(this->size, 0));
-        this->a_new = std::vector<std::vector<double>>(this->size, std::vector<double>(this->size, 0));
-        this->a_new[0][0] = this->a[0][0] = this->corners[0];
-        this->a_new[0][this->size - 1] = this->a[0][this->size - 1] = this->corners[1];
-        this->a_new[this->size - 1][0] = this->a[this->size - 1][0] = this->corners[3];
-        this->a_new[this->size - 1][this->size - 1] = this->a[this->size - 1][this->size - 1] = this->corners[2];
-        this->_accuracy = input.accuracy();
-        this->_iters = input.iterations();
-    }
-
-    void fill(){
-
-        double step = (this->corners[1] - this->corners[0]) / (this->size - 1);
-        #pragma acc data copy(this->a[0:this->size]), copy(this->a_new[0:this->size])
-        {
-            #pragma acc parallel loop seq gang num_gangs(256) vector vector_length(256)
-            for (int i=1; i<this->size-1; i++){
-                this->a_new[0][i] = this->a[0][i] = this->a[0][i - 1] + step;
-                this->a_new[this->size - 1][i] = this->a[this->size - 1][i] = this->a[this->size - 1][i - 1] + step;
-                this->a_new[i][0] = this->a[i][0] = this->a[i - 1][0] + step;
-                this->a_new[i][this->size-1] = this->a[i][this->size - 1] = this->a[i - 1][this->size - 1] + step;
-            }
-        }
-
-
-    }
-
-    double update(double error){
-        error = 0.0;
-
-        #pragma acc parallel loop seq vector vector_length(this->size) gang num_gangs(256) reduction(max:error) \
-            present(a[0:this->size], a_new[0:this->size])
-        for (int i=1; i<this->size-1; i++){
-            for (int j=1; j<this->size-1; j++){
-                this->a[i][j] = (this->a[i - 1][j] + this->a[i][j - 1] + this->a[i][j + 1] + this->a[i + 1][j]) / 4;
-                error = fmax(error, this->a[i][j] - this->a_new[i][j]);
-            }
-        }
-        return error;
-    }
-
-    void sw_ap(){
-        #pragma acc parallel loop seq vector vector vector_length(this->size) gang num_gangs(256) \
-        present(this->a[0:this->size], this->a_new[0:this->size])
-        for (int i=1; i<this->size-1; i++){
-            for (int j=1; j<this->size-1; j++){
-                this->a_new[i][j] = this->a[i][j];
-            }
-        }
-    }
-
-    [[nodiscard]] double grid_val(int i, int j) const{
-        return this->a[i][j];
-    }
-    [[nodiscard]] int iters() const{
-        return this->_iters;
-    }
-    [[nodiscard]] double accuracy() const{
-        return this->_accuracy;
-    }
-
-};
-
+double corners[4] = {10, 20, 30, 20};
 
 int main(int argc, char ** argv){
     parser input = parser(argc, argv);
-    Grid gr(input);
+
+    std::cout << "Grid Size: " << input.grid() << std::endl;
+    std::cout << "Accuracy: " << input.accuracy() << std::endl;
+    std::cout << "Iterations: " << input.iterations() << '\n' << std::endl;
+    std::cout << "Initializing..." << std::endl;
+    int size = input.grid();
+
+    auto* A_kernel = new double[size * size];
+    auto* B_kernel = new double[size * size];
+
+    std::memset(A_kernel, 0, sizeof(double) * size * size);
+
+
+    A_kernel[0] = corners[0];
+    A_kernel[size - 1] = corners[1];
+    A_kernel[size * size - 1] = corners[2];
+    A_kernel[size * (size - 1)] = corners[3];
+
+    int full_size = size * size;
+    double step = (corners[1] - corners[0]) / (size - 1);
 
     clock_t start = clock();
+	#pragma acc enter data copyin(A_kernel[0:full_size]) create(B_kernel[0:full_size])
+    {
+        #pragma acc parallel loop seq gang num_gangs(size) vector vector_length(size)
+        for (int i = 1; i < size - 1; i++){
+            A_kernel[i] = corners[0] + i * step;
+            A_kernel[i * size + (size-1)] = corners[1] + i * step;
+            A_kernel[i * size] = corners[0] + i * step;
+            A_kernel[size * (size - 1) + i] = corners[3] + i * step;
+        }
+    }
 
-    gr.fill();
+    std::memcpy(B_kernel, A_kernel, sizeof(double) * full_size);
 
     clock_t end = clock();
-    double elapsed_secs = double(end - start) / CLOCKS_PER_SEC;
 
+    double elapsed_secs = double(end - start) / CLOCKS_PER_SEC;
     std::cout << "Initialization time: " << elapsed_secs << std::endl;
 
-    double error = 1;
-    int g;
+
+    double error = 1.0;
+    int iter = 0;
+    double min_error = input.accuracy();
+    int max_iter = input.iterations();
     start = clock();
 
-    for (int i = 0; i < gr.iters() && error > gr.accuracy(); i++) {
-         error = gr.update(error);
-         gr.sw_ap();
-         g = i;
+#pragma acc enter data copyin(B_kernel[0:full_size], A_kernel[0:full_size], error, iter, min_error, max_iter)
+    while (error > min_error && iter < max_iter) {
+        iter++;
+        if(iter % 100 == 0){
+            #pragma acc kernels async(1)
+            error = 0.0;
+            #pragma acc update device(error) async(1)
+        }
+
+        #pragma acc data present(A_kernel, B_kernel, error)
+        #pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256) reduction(max:error) async(1)
+        for (int i = 1; i < size - 1; i++)
+        {
+            for (int j = 1; j < size - 1; j++)
+            {
+                B_kernel[i * size + j] = 0.25 * (A_kernel[i * size + j - 1] + A_kernel[(i - 1) * size + j] + A_kernel[(i + 1) * size + j] + A_kernel[i * size + j + 1]);
+                error = fmax(error, B_kernel[i * size + j] - A_kernel[i * size + j]);
+            }
+        }
+        if(iter % 100 == 0){
+            #pragma acc update host(error) async(1)
+            #pragma acc wait(1)
+        }
+        double* temp = A_kernel;
+        A_kernel = B_kernel;
+        B_kernel = temp;
     }
 
     end = clock();
     elapsed_secs = double(end - start) / CLOCKS_PER_SEC;
 
     std::cout << "Computations time: " << elapsed_secs << std::endl;
-    std::cout << "Error: " << error << std::endl;
-    std::cout << "Iteration: " << g+1 << std::endl;
+
+    #pragma acc exit data copyout(A_kernel[0:full_size], B_kernel[0:full_size])
+    #pragma acc update host(A_kernel[0:size * size], B_kernel[0:size * size])
+    free(A_kernel);
+    free(B_kernel);
     return 0;
 }
