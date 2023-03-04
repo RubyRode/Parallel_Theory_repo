@@ -124,7 +124,8 @@ int main(int argc, char ** argv){
     std::cout << "Computations time: " << elapsed_secs << std::endl;
 
     #pragma acc exit data copyout(A_kernel[0:full_size], B_kernel[0:full_size])
-    #pragma acc update host(A_kernel[0:size * size], B_kernel[0:size * size])
+    #pragma acc update host(A_kernel[0:size * size], B_kernel[0:size * size], error)
+    std::cout << "Error: " << error << std::endl;
     free(A_kernel);
     free(B_kernel);
     return 0;
