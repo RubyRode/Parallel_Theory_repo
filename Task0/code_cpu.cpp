@@ -21,7 +21,7 @@ using namespace std;
 void Arr_fill(TYPE * ds, int len){
     TYPE step = 2.0 * M_PI / len;
     int vector_len = 256;
-    #pragma acc parallel loop gang vector vector_length(vector_len) present(ds)
+    //#pragma acc parallel loop gang vector vector_length(vector_len) present(ds)
     for (int i = 0; i < len; i++){
         ds[i] = sin(step * i);
     }
@@ -30,8 +30,8 @@ void Arr_fill(TYPE * ds, int len){
 TYPE Arr_sum(const TYPE * ds, int len){
     TYPE sum = 0.0;
     int vector_len = 256;
-    #pragma acc data copy(sum)
-    #pragma acc parallel loop gang num_gangs(39063) vector vector_length(vector_len) reduction(+:sum) present(ds)
+//    #pragma acc data copy(sum)
+//    #pragma acc parallel loop gang num_gangs(39063) vector vector_length(vector_len) reduction(+:sum) present(ds)
     for (int i = 0; i < len; i++){
         sum += ds[i];
     }
@@ -47,7 +47,7 @@ int main (int argc, char** argv){
         fprintf(stderr, "Failed to allocate host arrays.\n");
         exit(EXIT_FAILURE);
     }
-    #pragma acc data create(dbs[0:arr_size])
+//    #pragma acc data create(dbs[0:arr_size])
     {
         clock_t begin = clock();
 
