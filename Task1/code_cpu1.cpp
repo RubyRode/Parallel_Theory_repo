@@ -126,6 +126,7 @@ int main(int argc, char ** argv){
     #pragma acc exit data copyout(A_kernel[0:full_size], B_kernel[0:full_size])
     #pragma acc update host(A_kernel[0:size * size], B_kernel[0:size * size], error)
     std::cout << "Error: " << error << std::endl;
+    std::cout << "Iteration: " << iter << std::endl;
     free(A_kernel);
     free(B_kernel);
     return 0;
