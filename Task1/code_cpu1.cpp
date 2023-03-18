@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
+#include <nvtx3/nvToolsExt.h>
 
 class parser{
 public:
@@ -65,15 +66,12 @@ int main(int argc, char ** argv){
     double step = (corners[1] - corners[0]) / (size - 1);
 
     clock_t start = clock();
-	#pragma acc enter data copyin(A_kernel[0:full_size]) create(B_kernel[0:full_size])
-    {
-        #pragma acc parallel loop seq gang num_gangs(size) vector vector_length(size)
-        for (int i = 1; i < size - 1; i++){
-            A_kernel[i] = corners[0] + i * step;
-            A_kernel[i * size + (size-1)] = corners[1] + i * step;
-            A_kernel[i * size] = corners[0] + i * step;
-            A_kernel[size * (size - 1) + i] = corners[3] + i * step;
-        }
+
+    for (int i = 1; i < size - 1; i++){
+        A_kernel[i] = corners[0] + i * step;
+        A_kernel[i * size + (size-1)] = corners[1] + i * step;
+        A_kernel[i * size] = corners[0] + i * step;
+        A_kernel[size * (size - 1) + i] = corners[3] + i * step;
     }
 
     std::memcpy(B_kernel, A_kernel, sizeof(double) * full_size);
@@ -90,13 +88,15 @@ int main(int argc, char ** argv){
     int max_iter = input.iterations();
     start = clock();
 
-#pragma acc enter data copyin(B_kernel[0:full_size], A_kernel[0:full_size], error, iter, min_error, max_iter)
+    nvtxRangePushA("Main loop");
+    #pragma acc enter data copyin(B_kernel[0:full_size], A_kernel[0:full_size], error)
+    {
+        nvtxRangePushA("After pragma");
     while (error > min_error && iter < max_iter) {
         iter++;
         if(iter % 100 == 0){
-            #pragma acc kernels async(1)
             error = 0.0;
-            #pragma acc update device(error) async(1)
+#pragma acc update device(error) async(1)
         }
 
         #pragma acc data present(A_kernel, B_kernel, error)
@@ -106,7 +106,7 @@ int main(int argc, char ** argv){
             for (int j = 1; j < size - 1; j++)
             {
                 B_kernel[i * size + j] = 0.25 * (A_kernel[i * size + j - 1] + A_kernel[(i - 1) * size + j] + A_kernel[(i + 1) * size + j] + A_kernel[i * size + j + 1]);
-                error = fmax(error, B_kernel[i * size + j] - A_kernel[i * size + j]);
+                error = fmax(error, std::abs(B_kernel[i * size + j] - A_kernel[i * size + j]));
             }
         }
         if(iter % 100 == 0){
@@ -116,15 +116,14 @@ int main(int argc, char ** argv){
         double* temp = A_kernel;
         A_kernel = B_kernel;
         B_kernel = temp;
-    }
+    }}
+    nvtxRangePop();
+    nvtxRangePop();
 
     end = clock();
     elapsed_secs = double(end - start) / CLOCKS_PER_SEC;
 
     std::cout << "Computations time: " << elapsed_secs << std::endl;
-
-    #pragma acc exit data copyout(A_kernel[0:full_size], B_kernel[0:full_size])
-    #pragma acc update host(A_kernel[0:size * size], B_kernel[0:size * size], error)
     std::cout << "Error: " << error << std::endl;
     std::cout << "Iteration: " << iter << std::endl;
     free(A_kernel);
