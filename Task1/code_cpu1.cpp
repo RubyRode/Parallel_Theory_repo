@@ -91,7 +91,6 @@ int main(int argc, char ** argv){
     nvtxRangePushA("Main loop");
     #pragma acc enter data copyin(B_kernel[0:full_size], A_kernel[0:full_size], error)
     {
-        nvtxRangePushA("After pragma");
     while (error > min_error && iter < max_iter) {
         iter++;
         if(iter % 100 == 0){
@@ -117,7 +116,6 @@ int main(int argc, char ** argv){
         A_kernel = B_kernel;
         B_kernel = temp;
     }}
-    nvtxRangePop();
     nvtxRangePop();
 
     end = clock();
