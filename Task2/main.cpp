@@ -137,7 +137,7 @@ int main(int argc, char ** argv){
                     }
                 }
 // обновляем значение ошибки на ЦПУ
-#pragma acc update host(A_kernel[index-1]);
+#pragma acc update host(A_kernel[index-1])
             error = std::abs(A_kernel[index-1]);
 // возвращаем значения матрицы А
 #pragma acc host_data use_device(A_kernel, B_kernel)
