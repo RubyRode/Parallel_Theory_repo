@@ -81,7 +81,7 @@ int main(int argc, char ** argv){
 //    }
     std::memcpy(B_kernel, A_kernel, sizeof(double) * full_size);
 
-    cudaError_t cudaStatus;
+//    cudaError_t cudaStatus;
     cublasStatus_t status;
     cublasHandle_t handle;
 
@@ -105,7 +105,7 @@ int main(int argc, char ** argv){
             iter++;
 
 #pragma acc data present(A_kernel, B_kernel)
-#pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256) async
+#pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256)
             for (int i = 1; i < size - 1; i++)
             {
                 for (int j = 1; j < size-1; j++)
@@ -117,8 +117,8 @@ int main(int argc, char ** argv){
                             A_kernel[IDX2C(i + 1, j, size)]);
                 }
             }
-            if(iter % 100 == 0){
-#pragma acc data present (A_kernel, B_kernel) wait
+            if(iter % 1 == 0){
+#pragma acc data present (A_kernel, B_kernel)
 #pragma acc host_data use_device(A_kernel, B_kernel)
                 {
                     // находим разницу матриц
@@ -151,6 +151,12 @@ int main(int argc, char ** argv){
     }
     cublasDestroy(handle);
     nvtxRangePop();
+//    for (int i = 0; i < size; i ++){
+//        for (int j = 0; j < size; j ++){
+//            std::cout << A_kernel[IDX2C(i, j, size)] << ' ';
+//        }
+//        std::cout << std::endl;
+//    }
 
     std::cout << "Error: " << error << std::endl;
     std::cout << "Iteration: " << iter << std::endl;
