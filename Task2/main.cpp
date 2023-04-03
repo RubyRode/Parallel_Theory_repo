@@ -51,6 +51,8 @@ int main(int argc, char ** argv){
     parser input = parser(argc, argv);
 
     int size = input.grid();
+    double min_error = input.accuracy();
+    int max_iter = input.iterations();
 
     auto* A_kernel = new double[size * size];
     auto* B_kernel = new double[size * size];
@@ -66,29 +68,21 @@ int main(int argc, char ** argv){
     int full_size = size * size;
     double step = (corners[1] - corners[0]) / (size - 1);
 
-    for (int i = 0; i < size; i ++) {
+    for (int i = 1; i < size - 1; i ++) {
         A_kernel[IDX2C(i, 0, size)] = corners[0] + i * step;
         A_kernel[IDX2C(0, i, size)] = corners[0] + i * step;
         A_kernel[IDX2C(i, size-1, size)] = corners[1] + i * step;
-        A_kernel[IDX2C(size-1, i, size)] = corners[1] + i * step;
+        A_kernel[IDX2C(size-1, i, size)] = corners[3] + i * step;
     }
 
-//    for (int i = 0; i < size; i ++){
-//        for (int j = 0; j < size; j ++){
-//            std::cout << A_kernel[IDX2C(i, j, size)] << ' ';
-//        }
-//        std::cout << std::endl;
-//    }
     std::memcpy(B_kernel, A_kernel, sizeof(double) * full_size);
 
-//    cudaError_t cudaStatus;
+
     cublasStatus_t status;
     cublasHandle_t handle;
 
     double error = 1.0;
     int iter = 0;
-    double min_error = input.accuracy();
-    int max_iter = input.iterations();
     status = cublasCreate(&handle);
     if (status != CUBLAS_STATUS_SUCCESS){
         std::cout << "cuBLAS init failed" << std::endl;
@@ -101,11 +95,12 @@ int main(int argc, char ** argv){
         int index = 0;
         double alpha = -1.0;
 
-        while (error > min_error && iter < max_iter) {
+        while (error > min_error && iter < max_iter) 
+	{
             iter++;
 
-#pragma acc data present(A_kernel, B_kernel)
-#pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256)
+	    #pragma acc data present(A_kernel, B_kernel)
+	    #pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256) async(1)
             for (int i = 1; i < size - 1; i++)
             {
                 for (int j = 1; j < size-1; j++)
@@ -117,9 +112,11 @@ int main(int argc, char ** argv){
                             A_kernel[IDX2C(i + 1, j, size)]);
                 }
             }
-            if(iter % 1 == 0){
-#pragma acc data present (A_kernel, B_kernel)
-#pragma acc host_data use_device(A_kernel, B_kernel)
+            if(iter % 150 == 0)
+	    {
+
+		#pragma acc data present (A_kernel, B_kernel) wait(1)
+		#pragma acc host_data use_device(A_kernel, B_kernel)
                 {
                     // находим разницу матриц
                     status = cublasDaxpy(handle, full_size, &alpha, B_kernel, 1, A_kernel, 1);
@@ -136,31 +133,31 @@ int main(int argc, char ** argv){
                         return EXIT_FAILURE;
                     }
                 }
-// обновляем значение ошибки на ЦПУ
-#pragma acc update host(A_kernel[index-1])
+
+	    // обновляем значение ошибки на ЦПУ
+	    #pragma acc update host(A_kernel[index-1])
             error = std::abs(A_kernel[index-1]);
-// возвращаем значения матрицы А
-#pragma acc host_data use_device(A_kernel, B_kernel)
-            status = cublasDcopy(handle, full_size, B_kernel, 1, A_kernel, 1);
-            }
+	    
+	    // возвращаем значения матрицы А
+	    #pragma acc host_data use_device(A_kernel, B_kernel)
+            status = cublasDcopy(handle, full_size, B_kernel, 1, A_kernel, 1); 
+	    }
+
+
             double* temp = A_kernel;
             A_kernel = B_kernel;
             B_kernel = temp;
 
         }
     }
-    cublasDestroy(handle);
+
     nvtxRangePop();
-//    for (int i = 0; i < size; i ++){
-//        for (int j = 0; j < size; j ++){
-//            std::cout << A_kernel[IDX2C(i, j, size)] << ' ';
-//        }
-//        std::cout << std::endl;
-//    }
+
 
     std::cout << "Error: " << error << std::endl;
     std::cout << "Iteration: " << iter << std::endl;
-    free(A_kernel);
-    free(B_kernel);
+    cublasDestroy(handle);
+    delete[] A_kernel;
+    delete[] B_kernel;
     return 0;
 }
