@@ -5,6 +5,8 @@
 #include <vector>
 #include <nvtx3/nvToolsExt.h>
 
+#define IDX2C(i,j,ld) (((j)*(ld))+(i))
+
 class parser{
 public:
     parser(int argc, char** argv){
@@ -74,6 +76,13 @@ int main(int argc, char ** argv){
         A_kernel[size * (size - 1) + i] = corners[3] + i * step;
     }
 
+    for (int i = 0; i < size; i ++){
+       for (int j = 0; j < size; j ++){
+           std::cout << A_kernel[IDX2C(i, j, size)] << ' ';
+       }
+       std::cout << std::endl;
+    }
+
     std::memcpy(B_kernel, A_kernel, sizeof(double) * full_size);
 
     clock_t end = clock();
@@ -89,7 +98,7 @@ int main(int argc, char ** argv){
     start = clock();
 
     nvtxRangePushA("Main loop");
-    #pragma acc enter data copyin(B_kernel[0:full_size], A_kernel[0:full_size], error)
+    #pragma acc enter data copyin(B_kernel[0:full_size], A_kernel[0:full_size], error) async(2)
     {
     while (error > min_error && iter < max_iter) {
         iter++;
@@ -105,7 +114,7 @@ int main(int argc, char ** argv){
             for (int j = 1; j < size - 1; j++)
             {
                 B_kernel[i * size + j] = 0.25 * (A_kernel[i * size + j - 1] + A_kernel[(i - 1) * size + j] + A_kernel[(i + 1) * size + j] + A_kernel[i * size + j + 1]);
-                error = fmax(error, std::abs(B_kernel[i * size + j] - A_kernel[i * size + j]));
+                error = fmax(error, B_kernel[i * size + j] - A_kernel[i * size + j]);
             }
         }
         if(iter % 100 == 0){
@@ -115,8 +124,23 @@ int main(int argc, char ** argv){
         double* temp = A_kernel;
         A_kernel = B_kernel;
         B_kernel = temp;
-    }}
+        }
+        #pragma acc update host(A_kernel[0:full_size])
+        
+        
+
+
+    }
     nvtxRangePop();
+
+{
+    for (int i = 0; i < size; i ++){
+       for (int j = 0; j < size; j ++){
+           std::cout << A_kernel[IDX2C(i, j, size)] << ' ';
+       }
+       std::cout << std::endl;
+    }
+}
 
     end = clock();
     elapsed_secs = double(end - start) / CLOCKS_PER_SEC;
