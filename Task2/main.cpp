@@ -14,7 +14,7 @@ class parser{
 public:
     parser(int argc, char** argv){
         this->_grid_size = 512;
-        this->_accur = 10e-6;
+        this->_accur = 1e-6;
         this->_iters = 1000000;
         for (int i=0; i<argc-1; i++){
             std::string arg = argv[i];
@@ -97,10 +97,11 @@ int main(int argc, char ** argv){
 
         while (error > min_error && iter < max_iter) 
 	{
+            nvtxRangePushA("Iteration");
             iter++;
 
 	    #pragma acc data present(A_kernel, B_kernel)
-	    #pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256) async(1)
+	    #pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256)
             for (int i = 1; i < size - 1; i++)
             {
                 for (int j = 1; j < size-1; j++)
@@ -112,10 +113,10 @@ int main(int argc, char ** argv){
                             A_kernel[IDX2C(i + 1, j, size)]);
                 }
             }
-            if(iter % 150 == 0)
+            if(iter % 100 == 0)
 	    {
 
-		#pragma acc data present (A_kernel, B_kernel) wait(1)
+		#pragma acc data present (A_kernel, B_kernel)
 		#pragma acc host_data use_device(A_kernel, B_kernel)
                 {
                     // находим разницу матриц
@@ -148,6 +149,7 @@ int main(int argc, char ** argv){
             A_kernel = B_kernel;
             B_kernel = temp;
 
+            nvtxRangePop();
         }
     }
 
