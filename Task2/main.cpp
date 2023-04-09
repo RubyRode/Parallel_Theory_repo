@@ -1,12 +1,10 @@
 #include <iostream>
-#include <cstdlib>
 #include <cmath>
 #include <cstring>
-#include <vector>
+
 #include <nvtx3/nvToolsExt.h>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
-#include <driver_types.h>
 
 #define IDX2C(i,j,ld) (((j)*(ld))+(i))
 
@@ -97,11 +95,10 @@ int main(int argc, char ** argv){
 
         while (error > min_error && iter < max_iter) 
 	{
-            nvtxRangePushA("Iteration");
             iter++;
 
 	    #pragma acc data present(A_kernel, B_kernel)
-	    #pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256)
+	    #pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256) async
             for (int i = 1; i < size - 1; i++)
             {
                 for (int j = 1; j < size-1; j++)
@@ -116,7 +113,7 @@ int main(int argc, char ** argv){
             if(iter % 100 == 0)
 	    {
 
-		#pragma acc data present (A_kernel, B_kernel)
+		#pragma acc data present (A_kernel, B_kernel) wait
 		#pragma acc host_data use_device(A_kernel, B_kernel)
                 {
                     // находим разницу матриц
@@ -143,13 +140,10 @@ int main(int argc, char ** argv){
 	    #pragma acc host_data use_device(A_kernel, B_kernel)
             status = cublasDcopy(handle, full_size, B_kernel, 1, A_kernel, 1); 
 	    }
-
-
             double* temp = A_kernel;
             A_kernel = B_kernel;
             B_kernel = temp;
 
-            nvtxRangePop();
         }
     }
 
