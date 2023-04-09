@@ -11,7 +11,7 @@ class parser{
 public:
     parser(int argc, char** argv){
         this->_grid_size = 512;
-        this->_accur = 10e-6;
+        this->_accur = 1e-6;
         this->_iters = 1000000;
         for (int i=0; i<argc-1; i++){
             std::string arg = argv[i];
@@ -76,12 +76,7 @@ int main(int argc, char ** argv){
         A_kernel[size * (size - 1) + i] = corners[3] + i * step;
     }
 
-    for (int i = 0; i < size; i ++){
-       for (int j = 0; j < size; j ++){
-           std::cout << A_kernel[IDX2C(i, j, size)] << ' ';
-       }
-       std::cout << std::endl;
-    }
+
 
     std::memcpy(B_kernel, A_kernel, sizeof(double) * full_size);
 
@@ -98,17 +93,17 @@ int main(int argc, char ** argv){
     start = clock();
 
     nvtxRangePushA("Main loop");
-    #pragma acc enter data copyin(B_kernel[0:full_size], A_kernel[0:full_size], error) async(2)
+    #pragma acc enter data copyin(B_kernel[0:full_size], A_kernel[0:full_size], error)
     {
     while (error > min_error && iter < max_iter) {
         iter++;
         if(iter % 100 == 0){
             error = 0.0;
-#pragma acc update device(error) async(1)
+#pragma acc update device(error)
         }
 
         #pragma acc data present(A_kernel, B_kernel, error)
-        #pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256) reduction(max:error) async(1)
+        #pragma acc parallel loop independent collapse(2) vector vector_length(256) gang num_gangs(256) reduction(max:error) 
         for (int i = 1; i < size - 1; i++)
         {
             for (int j = 1; j < size - 1; j++)
@@ -118,29 +113,18 @@ int main(int argc, char ** argv){
             }
         }
         if(iter % 100 == 0){
-            #pragma acc update host(error) async(1)
-            #pragma acc wait(1)
+            #pragma acc update host(error) 
         }
         double* temp = A_kernel;
         A_kernel = B_kernel;
         B_kernel = temp;
         }
-        #pragma acc update host(A_kernel[0:full_size])
         
-        
-
+    
 
     }
     nvtxRangePop();
 
-{
-    for (int i = 0; i < size; i ++){
-       for (int j = 0; j < size; j ++){
-           std::cout << A_kernel[IDX2C(i, j, size)] << ' ';
-       }
-       std::cout << std::endl;
-    }
-}
 
     end = clock();
     elapsed_secs = double(end - start) / CLOCKS_PER_SEC;
