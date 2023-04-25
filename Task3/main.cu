@@ -49,7 +49,7 @@ void cross_calc(double* A_kernel, double* B_kernel, size_t size){
     
     size_t j = blockIdx.x;
     size_t i = threadIdx.x;
-    // main computation
+    // main cross computation. the average of 4 incident cells is taken
     if (i != 0 && j != 0){
        
         B_kernel[j * size + i] = 0.25 * (
@@ -65,9 +65,9 @@ void cross_calc(double* A_kernel, double* B_kernel, size_t size){
 
 __global__
 void get_error_matrix(double* A_kernel, double* B_kernel, double* out){
-    // get index
+    // get thread index
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    // take the maximum error
+    // take the difference between B_kernel and A_kernel
     if (blockIdx.x != 0 && threadIdx.x != 0){
         
         out[idx] = std::abs(B_kernel[idx] - A_kernel[idx]);
@@ -107,7 +107,7 @@ int main(int argc, char ** argv){
     }
 
     std::memcpy(B_kernel, A_kernel, sizeof(double) * full_size);
-
+    // matrix output before computations
     // for (int i = 0; i < size; i ++) {
     //     for (int j = 0; j < size; j ++) {
     //         std::cout << A_kernel[j * size + i] << " ";
@@ -118,18 +118,19 @@ int main(int argc, char ** argv){
     
     // Choosing the device
     cudaSetDevice(3);
-
+    
     double* dev_A, *dev_B, *dev_err, *dev_err_mat, *temp_stor = NULL;
     size_t tmp_stor_size = 0;
-    // Memory allocation on the device
+    // Memory allocation for 2 matrixes and error variable on the device 
     cudaError_t status_A = cudaMalloc(&dev_A, sizeof(double) * full_size);
     cudaError_t status_B = cudaMalloc(&dev_B, sizeof(double) * full_size);
     cudaError_t status = cudaMalloc(&dev_err, sizeof(double));
-    // some accertions to catch errors
+    // some memory allocation accertions to catch errors
     if (status != cudaSuccess){
         std::cout << "Device error variable allocation error " << status << std::endl;
         return status;
     }
+    // memory allocation on device for error matrix
     status = cudaMalloc(&dev_err_mat, sizeof(double) * full_size);
     if (status != cudaSuccess){
         std::cout << "Device error matrix allocation error " << status << std::endl;
@@ -168,20 +169,21 @@ int main(int argc, char ** argv){
 
     int i = 0;
     double error = 1.0;
-
+    // openining the nvtx mark for profiling
     nvtxRangePushA("Main loop");
     // main loop
     while (i < max_iter && error > min_error){
         i++;
-        // compute the iteration
+        // compute one cross compurtation
         cross_calc<<<size-1, size-1>>>(dev_A, dev_B, size);
 
         if (i % 100 == 0){
-            // get the error matrix
+            // get the error matrix. the difference between the matrixes
+            // number of threads = (size-1)^2
             get_error_matrix<<<size - 1, size - 1>>>(dev_A, dev_B, dev_err_mat);
-            // find the maximum error
+            // find the maximum error. result in dev_err
             cub::DeviceReduce::Max(temp_stor, tmp_stor_size, dev_err_mat, dev_err, full_size);
-            // copy to host memory
+            // copying the error from device to host memory
             cudaMemcpy(&error, dev_err, sizeof(double), cudaMemcpyDeviceToHost);
 
         }
@@ -190,8 +192,9 @@ int main(int argc, char ** argv){
 
 
     }
-
+    // closing the nvtx mark
     nvtxRangePop();
+    // matrix output check after the computations
     // cudaMemcpy(A_kernel, dev_A, sizeof(double) * full_size, cudaMemcpyDeviceToHost);
     
     // for (int i = 0; i < size; i ++) {
@@ -201,9 +204,10 @@ int main(int argc, char ** argv){
     //     std::cout << std::endl;
     // }
 
+    // print out the results
     std::cout << "Error: " << error << std::endl;
     std::cout << "Iteration: " << i << std::endl;
-
+    // memory deallocation
     cudaFree(temp_stor);
     cudaFree(dev_err_mat);
     cudaFree(dev_A);
