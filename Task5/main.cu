@@ -199,12 +199,12 @@ int main(int argc, char ** argv){
         // Top Bound
         if (rank != 0){
             MPI_Sendrecv(dev_B + size + 1, size - 2, MPI_DOUBLE, rank - 1, 0, 
-            dev_B + 1, size - 2, MPI_DOUBLE, rank - 1, 0, MPI_COMM_WORLD, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            dev_B + 1, size - 2, MPI_DOUBLE, rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
         // Bottom Bound
         if (rank != group_size - 1){
             MPI_Sendrecv(dev_B + (proc_area - 2) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0, 
-            dev_B + (proc_area - 1) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0, MPI_COMM_WORLD, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            dev_B + (proc_area - 1) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
 
         // matrix swapping
