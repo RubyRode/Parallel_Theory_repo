@@ -50,8 +50,8 @@ __global__
 void cross_calc(double* A_kernel, double* B_kernel, size_t size, size_t dev_size){
     // get the block and thread indices
     
-    size_t j = blockIdx.x;
-    size_t i = threadIdx.x;
+    size_t j = blockIdx.y * blockDim.y + threadIdx.y;
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     // main computation
     if (i != 0 && j != 0 && j != size && i != dev_size - 1){
        
@@ -86,7 +86,7 @@ int main(int argc, char ** argv){
     int size = input.grid();
     double min_error = input.accuracy();
     int max_iter = input.iterations();
-    int full_size = size * size;
+    unsigned long full_size = size * size;
     double step = (corners[1] - corners[0]) / (size - 1);
 
     // MPI initialization 
@@ -98,12 +98,18 @@ int main(int argc, char ** argv){
     // Set device number 
     cudaSetDevice(rank);
 
+    if (rank!=0)
+        cudaDeviceEnablePeerAccess(rank - 1, 0);
+    if (rank!=group_size-1)
+        cudaDeviceEnablePeerAccess(rank + 1, 0);
+
     size_t proc_area = size / group_size;
     size_t start_idx = proc_area * rank;
 
     // Matrixes initialization
-    auto* A_kernel = new double[size * size];
-    auto* B_kernel = new double[size * size];
+    double* A_kernel, *B_kernel;
+    cudaMallocHost(&A_kernel, sizeof(double) * full_size);
+    cudaMallocHost(&B_kernel, sizeof(double) * full_size);
 
     std::memset(A_kernel, 0, sizeof(double) * size * size);
 
@@ -177,34 +183,48 @@ int main(int argc, char ** argv){
     cudaMalloc(&temp_stor, tmp_stor_size);
 
     int i = 0;
-    double error = 1.0;
+    double *error;
+    cudaMallocHost(&error, sizeof(double));
+    *error = 1.0;
+
+    cudaStream_t stream, mem_stream;
+    cudaStreamCreate(&stream);
 
     nvtxRangePushA("Main loop");
     // main loop
-    while (i < max_iter && error > min_error){
+    while ((i < max_iter) && (*error) > min_error){
         i++;
         // compute the iteration
-        cross_calc<<<size-1, size-1>>>(dev_A, dev_B, size, proc_area);
+        cross_calc<<<gridDim, blockDim, 0, stream>>>(dev_A, dev_B, size, proc_area);
 
         if (i % 100 == 0){
             // get the error matrix
-            get_error_matrix<<<size - 1, size - 1>>>(dev_A, dev_B, dev_err_mat);
+            get_error_matrix<<<blocks_x * blocks_y, threads_x, 0, stream>>>(dev_A, dev_B, dev_err_mat);
             // find the maximum error
-            cub::DeviceReduce::Max(temp_stor, tmp_stor_size, dev_err_mat, dev_err, full_size);
+            cub::DeviceReduce::Max(temp_stor, tmp_stor_size, dev_err_mat, dev_err, mem_size);
+
+            // stream syncing
+            cudaStreamSynchronize(stream);
+
+            MPI_Allreduce(dev_err, dev_err, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
             // copy to host memory
-            cudaMemcpy(&error, dev_err, sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpyAsync(error, dev_err, sizeof(double), cudaMemcpyDeviceToHost, stream);
 
         }
+
+        cudaStreamSynchronize(stream);
+
         // Bounds exchange
         // Top Bound
         if (rank != 0){
             MPI_Sendrecv(dev_B + size + 1, size - 2, MPI_DOUBLE, rank - 1, 0, 
-            dev_B + 1, size - 2, MPI_DOUBLE, rank - 1, 0, MPI_COMM_WORLD, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            dev_B + 1, size - 2, MPI_DOUBLE, rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
         // Bottom Bound
         if (rank != group_size - 1){
             MPI_Sendrecv(dev_B + (proc_area - 2) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0, 
-            dev_B + (proc_area - 1) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0, MPI_COMM_WORLD, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            dev_B + (proc_area - 1) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
 
         // matrix swapping
@@ -223,16 +243,16 @@ int main(int argc, char ** argv){
     //     std::cout << std::endl;
     // }
     if (rank == 0){
-        std::cout << "Error: " << error << std::endl;
+        std::cout << "Error: " << *error << std::endl;
         std::cout << "Iteration: " << i << std::endl;
     }
-    
+
     cudaFree(temp_stor);
     cudaFree(dev_err_mat);
     cudaFree(dev_A);
     cudaFree(dev_B);
-    delete[] A_kernel;
-    delete[] B_kernel;
+    cudaFree(A_kernel);
+    cudaFree(B_kernel);
     MPI_Finalize();
     return 0;
 }

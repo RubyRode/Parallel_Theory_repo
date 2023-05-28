@@ -108,13 +108,13 @@ int main(int argc, char ** argv){
 
     std::memcpy(B_kernel, A_kernel, sizeof(double) * full_size);
     // matrix output before computations
-    // for (int i = 0; i < size; i ++) {
-    //     for (int j = 0; j < size; j ++) {
-    //         std::cout << A_kernel[j * size + i] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-    // std::cout << std::endl;
+    for (int i = 0; i < size; i ++) {
+        for (int j = 0; j < size; j ++) {
+            std::cout << A_kernel[j * size + i] << " ";
+        }
+        std::cout << std::endl;
+    }
+    std::cout << std::endl;
     
     // Choosing the device
     cudaSetDevice(3);
