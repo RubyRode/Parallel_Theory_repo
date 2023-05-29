@@ -9,6 +9,22 @@
 
 #include <mpi.h>
 
+#define GET_CUDA_STATUS(status) {gpuAssert((status), __FILE__, __LINE__);}
+inline void gpuAssert(cudaError_t status, const char* file, int line){
+    if (status != cudaSuccess){
+        fprintf(stderr, "GPU assertion: %s %s %d\n", cudaGetErrorString(status), file, line);
+        std::exit(status);
+    }
+}
+
+#define GET_MPI_STATUS(status) {mpiAssert((status), __FILE__, __LINE__);}
+inline void mpiAssert(int status, const char* file, int line){
+    if (status != MPI_SUCCESS){
+        fprintf(stderr, "MPI assertion: %s %s %d\n", status, file, line);
+        std::exit(status);
+    }
+}
+
 class parser{
 public:
     parser(int argc, char** argv){
@@ -46,32 +62,36 @@ private:
 
 double corners[4] = {10, 20, 30, 20};
 
-__global__
-void cross_calc(double* A_kernel, double* B_kernel, size_t size, size_t dev_size){
+#define CALCULATE(A, B, size, i, j) \
+    B[i * size + j] = 0.25 * (A[i * size + j - 1]\
+                             + A[(i - 1) * size + j]\
+                             + A[(i + 1) * size + j]\
+                             + A[i * size + j + 1]);
+
+__global__ 
+void cross_calc(double* A, double* B, size_t size, size_t group_size){
     // get the block and thread indices
     
-    size_t j = blockIdx.y * blockDim.y + threadIdx.y;
-    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int i = blockIdx.y * blockDim.y + threadIdx.y;
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
     // main computation
-    if (i != 0 && j != 0 && j != size && i != dev_size - 1){
+    if (!(i < 2 || j < 1 || j > size - 2 || i > group_size - 2)){
        
-        B_kernel[j * size + i] = 0.25 * (
-            A_kernel[j * size + i - 1] + 
-            A_kernel[j * size + i + 1] + 
-            A_kernel[(j + 1) * size + i] + 
-            A_kernel[(j - 1) * size + i]
-        );
+        CALCULATE(A, B, size, i, j);
     
     }
 
 }
 
 __global__
-void get_error_matrix(double* A_kernel, double* B_kernel, double* out){
+void get_error_matrix(double* A_kernel, double* B_kernel, double* out, size_t size, size_t group_size){
     // get index
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int i = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    size_t idx = i * size + j;
     // take the maximum error
-    if (blockIdx.x != 0 && threadIdx.x != 0){
+    if (!(j == 0 || i == 0 || j == size - 1 || i == group_size - 1)){
         
         out[idx] = std::abs(B_kernel[idx] - A_kernel[idx]);
     
@@ -79,8 +99,54 @@ void get_error_matrix(double* A_kernel, double* B_kernel, double* out){
 
 }
 
+__global__ 
+void bound_calc(double* A, double* B, size_t size, size_t group_size){
+    unsigned int up = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int down = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (up == 0 || up > size - 2) return;
+
+    if (up < size){
+        CALCULATE(A, B, size, 1, up);
+        CALCULATE(A, B, size, (group_size - 2), down);
+    }
+}
+
+double *A_kernel = nullptr,
+        *B_kernel = nullptr,
+        *dev_A = nullptr,
+        *dev_B = nullptr,
+        *dev_err = nullptr,
+        *dev_err_mat = nullptr,
+        *temp_stor = nullptr;
+
+void free_mem(){
+    if (dev_A) cudaFree(dev_A);
+    if (dev_B) cudaFree(dev_B);
+    if (dev_err_mat) cudaFree(dev_err_mat);
+    if (temp_stor) cudaFree(temp_stor);
+    if (A_kernel) cudaFree(A_kernel);
+    if (B_kernel) cudaFree(B_kernel);
+}
+
+int near_power_two(size_t num){
+    int pow = 1;
+    while(pow < num){
+        pow <<= 1;
+    }
+    return pow;
+}
+
 
 int main(int argc, char ** argv){
+
+    auto exit_status = std::atexit(free_mem);
+
+    if (exit_status != 0){
+        std::cout << "Register error" << std::endl;
+        exit(-1);
+    }
+
     parser input = parser(argc, argv);
 
     int size = input.grid();
@@ -91,35 +157,37 @@ int main(int argc, char ** argv){
 
     // MPI initialization 
     int rank, group_size;
-    MPI_Init(&argc, &argv);
+    GET_MPI_STATUS(MPI_Init(&argc, &argv));
+    GET_MPI_STATUS(MPI_Comm_rank(MPI_COMM_WORLD, &rank));
+    GET_MPI_STATUS(MPI_Comm_size(MPI_COMM_WORLD, &group_size));
 
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &group_size);
     // Set device number 
-    cudaSetDevice(rank);
+    int device_num = 0;
+    cudaGetDeviceCount(&device_num);
+    
+    if (group_size > device_num || group_size < 1) {
+        std::cout << "Invalid device number" << std::endl;
+        std::exit(-1);
+    }
 
-    if (rank!=0)
-        cudaDeviceEnablePeerAccess(rank - 1, 0);
-    if (rank!=group_size-1)
-        cudaDeviceEnablePeerAccess(rank + 1, 0);
+
+    GET_CUDA_STATUS(cudaSetDevice(rank));
+
 
     size_t proc_area = size / group_size;
     size_t start_idx = proc_area * rank;
 
     // Matrixes initialization
-    double* A_kernel, *B_kernel;
-    cudaMallocHost(&A_kernel, sizeof(double) * full_size);
-    cudaMallocHost(&B_kernel, sizeof(double) * full_size);
+    GET_CUDA_STATUS(cudaMallocHost(&A_kernel, sizeof(double) * full_size));
+    GET_CUDA_STATUS(cudaMallocHost(&B_kernel, sizeof(double) * full_size));
 
     std::memset(A_kernel, 0, sizeof(double) * size * size);
 
-
+    // Boundaries initialization
     A_kernel[0] = corners[0];
     A_kernel[size - 1] = corners[1];
     A_kernel[size * size - 1] = corners[2];
     A_kernel[size * (size - 1)] = corners[3];
-
-
 
     for (int i = 1; i < size - 1; i ++) {
         A_kernel[i] = corners[0] + i * step;
@@ -137,8 +205,6 @@ int main(int argc, char ** argv){
     //     std::cout << std::endl;
     // }
     // std::cout << std::endl;
-
-    double* dev_A, *dev_B, *dev_err, *dev_err_mat, *temp_stor = NULL;
     
     // memory for one process
     if (rank != 0 && rank != group_size -1){
@@ -149,83 +215,83 @@ int main(int argc, char ** argv){
 
     size_t mem_size = size * proc_area;
     
-    unsigned int threads_x = (size <= 1024) ? size : 1024;
-    unsigned int blocks_x = proc_area;
-    unsigned int blocks_y = size / threads_x;
-
-    dim3 blockDim(threads_x, 1);
-    dim3 gridDim(blocks_x, blocks_y);
-
     
-    // Memory allocation on the device
-    // Kernels A and B
-    cudaMalloc(&dev_A, sizeof(double) * full_size);
-    cudaMalloc(&dev_B, sizeof(double) * full_size);
-    // Device error variable
-    cudaMalloc(&dev_err, sizeof(double));
 
-    // Device error matrix allocation
-    cudaMalloc(&dev_err_mat, sizeof(double) * full_size);
+    GET_CUDA_STATUS(cudaMalloc((void**)&dev_A, sizeof(double) * mem_size));
+    GET_CUDA_STATUS(cudaMalloc((void**)&dev_B, sizeof(double) * mem_size));
+    GET_CUDA_STATUS(cudaMalloc((void**)&dev_err, sizeof(double)));
+    GET_CUDA_STATUS(cudaMalloc((void**)&dev_err_mat, sizeof(double) * mem_size));
 
-    // one row offset for the grid
     size_t offset = (rank != 0) ? size : 0;
-    // reset matrix
-    cudaMemset(dev_A, 0, sizeof(double) * mem_size);
-    cudaMemset(dev_B, 0, sizeof(double) * mem_size);
-    // copy matrices to device
-    cudaMemcpy(dev_A, A_kernel + (start_idx * size) - offset, sizeof(double) * mem_size, cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_B, B_kernel + (start_idx * size) - offset, sizeof(double) * mem_size, cudaMemcpyHostToDevice);
+    GET_CUDA_STATUS(cudaMemcpy(dev_A, A_kernel + (start_idx * size) - offset, 
+                    sizeof(double) * mem_size, cudaMemcpyHostToDevice));
+    GET_CUDA_STATUS(cudaMemcpy(dev_B, B_kernel + (start_idx * size) - offset, 
+                    sizeof(double) * mem_size, cudaMemcpyHostToDevice));
 
 
     // Temporary storage allocation
     size_t tmp_stor_size = 0;
     cub::DeviceReduce::Max(temp_stor, tmp_stor_size, dev_err_mat, dev_err, size * proc_area);
-    cudaMalloc(&temp_stor, tmp_stor_size);
+    GET_CUDA_STATUS(cudaMalloc((void**)&temp_stor, tmp_stor_size));
 
-    int i = 0;
     double *error;
     cudaMallocHost(&error, sizeof(double));
     *error = 1.0;
 
-    cudaStream_t stream, mem_stream;
-    cudaStreamCreate(&stream);
+    cudaStream_t stream, mat_stream;
+    GET_CUDA_STATUS(cudaStreamCreate(&stream));
+    GET_CUDA_STATUS(cudaStreamCreate(&mat_stream));
 
-    nvtxRangePushA("Main loop");
+    unsigned int threads_x = std::min(near_power_two(size), 1024);
+    unsigned int blocks_y = proc_area;
+    unsigned int blocks_x = size / threads_x;
+
+    dim3 blockDim(threads_x, 1);
+    dim3 gridDim(blocks_x, blocks_y);
+
+    int i = 0;
+    // nvtxRangePushA("Main loop");
     // main loop
     while ((i < max_iter) && (*error) > min_error){
         i++;
-        // compute the iteration
-        cross_calc<<<gridDim, blockDim, 0, stream>>>(dev_A, dev_B, size, proc_area);
+        // compute the iterations
+        bound_calc<<<size, 1, 0, stream>>>(dev_A, dev_B, size, proc_area);
+
+        cudaStreamSynchronize(stream);
+
+        cross_calc<<<gridDim, blockDim, 0, mat_stream>>>(dev_A, dev_B, size, proc_area);
 
         if (i % 100 == 0){
             // get the error matrix
-            get_error_matrix<<<blocks_x * blocks_y, threads_x, 0, stream>>>(dev_A, dev_B, dev_err_mat);
+            get_error_matrix<<<gridDim, blockDim, 0, mat_stream>>>(dev_A, dev_B, dev_err_mat, size, proc_area);
             // find the maximum error
-            cub::DeviceReduce::Max(temp_stor, tmp_stor_size, dev_err_mat, dev_err, mem_size);
+            cub::DeviceReduce::Max(temp_stor, tmp_stor_size, dev_err_mat, dev_err, mem_size, mat_stream);
 
             // stream syncing
-            cudaStreamSynchronize(stream);
+            GET_CUDA_STATUS(cudaStreamSynchronize(mat_stream));
 
-            MPI_Allreduce(dev_err, dev_err, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            GET_MPI_STATUS(MPI_Allreduce(dev_err, dev_err, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD));
 
             // copy to host memory
-            cudaMemcpyAsync(error, dev_err, sizeof(double), cudaMemcpyDeviceToHost, stream);
+            GET_CUDA_STATUS(cudaMemcpyAsync(error, dev_err, sizeof(double), cudaMemcpyDeviceToHost, mat_stream));
 
         }
 
-        cudaStreamSynchronize(stream);
 
         // Bounds exchange
         // Top Bound
         if (rank != 0){
-            MPI_Sendrecv(dev_B + size + 1, size - 2, MPI_DOUBLE, rank - 1, 0, 
-            dev_B + 1, size - 2, MPI_DOUBLE, rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            GET_MPI_STATUS(MPI_Sendrecv(dev_B + size + 1, size - 2, MPI_DOUBLE, rank - 1, 0, 
+            dev_B + 1, size - 2, MPI_DOUBLE, rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE));
         }
         // Bottom Bound
         if (rank != group_size - 1){
-            MPI_Sendrecv(dev_B + (proc_area - 2) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0, 
-            dev_B + (proc_area - 1) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+		    GET_MPI_STATUS(MPI_Sendrecv(dev_B + (proc_area - 2) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0,
+							dev_B + (proc_area - 1) * size + 1, 
+							size - 2, MPI_DOUBLE, rank + 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE));
         }
+        // return 999;
+        cudaStreamSynchronize(mat_stream);
 
         // matrix swapping
         std::swap(dev_A, dev_B);
@@ -233,26 +299,13 @@ int main(int argc, char ** argv){
 
     }
 
-    nvtxRangePop();
-    // cudaMemcpy(A_kernel, dev_A, sizeof(double) * full_size, cudaMemcpyDeviceToHost);
+    //nvtxRangePop();
     
-    // for (int i = 0; i < size; i ++) {
-    //     for (int j = 0; j < size; j ++) {
-    //         std::cout << A_kernel[j * size + i] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
     if (rank == 0){
         std::cout << "Error: " << *error << std::endl;
         std::cout << "Iteration: " << i << std::endl;
     }
 
-    cudaFree(temp_stor);
-    cudaFree(dev_err_mat);
-    cudaFree(dev_A);
-    cudaFree(dev_B);
-    cudaFree(A_kernel);
-    cudaFree(B_kernel);
-    MPI_Finalize();
+    GET_MPI_STATUS(MPI_Finalize());
     return 0;
 }
