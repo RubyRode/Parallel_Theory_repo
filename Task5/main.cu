@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstring>
 #include <iomanip>
+#include <ctime>
 
 #include <nvtx3/nvToolsExt.h>
 #include <cuda_runtime.h>
@@ -137,6 +138,40 @@ int near_power_two(size_t num){
     return pow;
 }
 
+bool isPrime(int n)
+{
+
+    if (n <= 1)
+        return false;
+
+    for (int i = 2; i * i <= n; i++) {
+        if (n % i == 0)
+            return false;
+    }
+    return true;
+}
+
+
+int find_area(int size, int gr_size, int rank){
+    if (size % gr_size == 0) return size / gr_size;
+    
+    int tmp = size;
+    while (tmp % gr_size != 0){
+        tmp++;
+    }
+    int kek = size - ((gr_size - 1) * tmp / gr_size);
+    // std::cout << "rank: "<< rank << "kek: " << kek << std::endl;
+    if (kek == 1) {
+
+        if (rank != gr_size - 1) return (tmp/gr_size) -1;
+        return gr_size;
+    } else if (rank == gr_size - 1) return kek;
+
+    return tmp / gr_size;
+}
+
+
+
 
 int main(int argc, char ** argv){
 
@@ -173,9 +208,11 @@ int main(int argc, char ** argv){
 
     GET_CUDA_STATUS(cudaSetDevice(rank));
 
-
-    size_t proc_area = size / group_size;
+    int proc_area = find_area(size, group_size, rank);
     size_t start_idx = proc_area * rank;
+    if (rank == group_size - 1) {
+        start_idx = (size - proc_area) ;
+    }
 
     // Matrixes initialization
     GET_CUDA_STATUS(cudaMallocHost(&A_kernel, sizeof(double) * full_size));
@@ -198,20 +235,27 @@ int main(int argc, char ** argv){
 
     std::memcpy(B_kernel, A_kernel, sizeof(double) * full_size);
 
-    // for (int i = 0; i < size; i ++) {
-    //     for (int j = 0; j < size; j ++) {
-    //         std::cout << A_kernel[j * size + i] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-    // std::cout << std::endl;
-    
-    // memory for one process
-    if (rank != 0 && rank != group_size -1){
-        proc_area += 2;
-    }else{
-        proc_area++;
+    if (rank == 0){
+        for (int i = 0; i < size; i ++) {
+            for (int j = 0; j < size; j ++) {
+                std::cout << A_kernel[j * size + i] << " ";
+            }
+            std::cout << std::endl;
+        }
+        std::cout << std::endl;
     }
+    // memory for one process
+    int prc_area_add = 0;
+    if (group_size > 1)
+    {
+        if (rank != 0 && rank != group_size -1){
+            prc_area_add = 2;
+        }
+        else{
+            prc_area_add++;
+        }
+    }
+    proc_area = proc_area + prc_area_add;
 
     size_t mem_size = size * proc_area;
     
@@ -244,13 +288,14 @@ int main(int argc, char ** argv){
 
     unsigned int threads_x = std::min(near_power_two(size), 1024);
     unsigned int blocks_y = proc_area;
-    unsigned int blocks_x = size / threads_x;
+    unsigned int blocks_x = near_power_two(size) / threads_x;
 
     dim3 blockDim(threads_x, 1);
     dim3 gridDim(blocks_x, blocks_y);
 
     int i = 0;
-    // nvtxRangePushA("Main loop");
+    nvtxRangePushA("Main loop");
+    clock_t begin = clock();
     // main loop
     while ((i < max_iter) && (*error) > min_error){
         i++;
@@ -275,20 +320,24 @@ int main(int argc, char ** argv){
             // copy to host memory
             GET_CUDA_STATUS(cudaMemcpyAsync(error, dev_err, sizeof(double), cudaMemcpyDeviceToHost, mat_stream));
 
+
         }
 
 
         // Bounds exchange
         // Top Bound
-        if (rank != 0){
-            GET_MPI_STATUS(MPI_Sendrecv(dev_B + size + 1, size - 2, MPI_DOUBLE, rank - 1, 0, 
-            dev_B + 1, size - 2, MPI_DOUBLE, rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE));
-        }
-        // Bottom Bound
-        if (rank != group_size - 1){
-		    GET_MPI_STATUS(MPI_Sendrecv(dev_B + (proc_area - 2) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0,
-							dev_B + (proc_area - 1) * size + 1, 
-							size - 2, MPI_DOUBLE, rank + 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE));
+        if (group_size > 1)
+        {
+            if (rank != 0){
+                GET_MPI_STATUS(MPI_Sendrecv(dev_B + size + 1, size - 2, MPI_DOUBLE, rank - 1, 0, 
+                dev_B + 1, size - 2, MPI_DOUBLE, rank - 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE));
+            }
+            // Bottom Bound
+            if (rank != group_size - 1){
+		        GET_MPI_STATUS(MPI_Sendrecv(dev_B + (proc_area - 2) * size + 1, size - 2, MPI_DOUBLE, rank + 1, 0,
+		    					dev_B + (proc_area - 1) * size + 1, 
+		    					size - 2, MPI_DOUBLE, rank + 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE));
+            }
         }
         // return 999;
         cudaStreamSynchronize(mat_stream);
@@ -298,14 +347,62 @@ int main(int argc, char ** argv){
 
 
     }
+    clock_t end = clock();
+    
+    
 
-    //nvtxRangePop();
+
+    nvtxRangePop();
     
     if (rank == 0){
         std::cout << "Error: " << *error << std::endl;
         std::cout << "Iteration: " << i << std::endl;
+        std::cout << "Time: " << 1.0 * (end - begin) / CLOCKS_PER_SEC << std::endl;
     }
 
+    cudaMemcpy(A_kernel, dev_A, sizeof(double) * size * proc_area, cudaMemcpyDeviceToHost);
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (rank == 0)
+    {std::cout << "RANK: " << rank << std::endl << std::endl;
+    {    for (int i = 0; i < proc_area - prc_area_add; i ++) {
+            for (int j = 0; j < size; j ++) {
+                std::cout << A_kernel[i * size + j] << " ";
+            }
+            std::cout << std::endl;
+        }
+        // std::cout << std::endl;
+    }}
+
+    if (rank == 1)
+    {std::cout << "RANK: " << rank << std::endl << std::endl;
+    {    for (int i = 1; i < proc_area - prc_area_add + 1; i ++) {
+            for (int j = 0; j < size; j ++) {
+                std::cout << A_kernel[i * size + j] << " ";
+            }
+            std::cout << std::endl;
+        }
+        // std::cout << std::endl;
+    }}
+    if (rank == 2)
+    {std::cout << "RANK: " << rank << std::endl << std::endl;
+    {    for (int i = 1; i < proc_area - prc_area_add + 1; i ++) {
+            for (int j = 0; j < size; j ++) {
+                std::cout << A_kernel[i * size + j] << " ";
+            }
+            std::cout << std::endl;
+        }
+        // std::cout << std::endl;
+    }}
+    if (rank == 3)
+    {std::cout << "RANK: " << rank << std::endl << std::endl;
+    {    for (int i = 1; i < proc_area; i ++) {
+            for (int j = 0; j < size; j ++) {
+                std::cout << A_kernel[i * size + j] << " ";
+            }
+            std::cout << std::endl;
+        }
+        std::cout << std::endl;
+    }}
     GET_MPI_STATUS(MPI_Finalize());
     return 0;
 }
